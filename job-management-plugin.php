@@ -316,6 +316,33 @@ function job_management_register_api_endpoints() {
 }
 
 add_action('rest_api_init', 'job_management_register_api_endpoints');
+
+// Callback function to fetch job details based on post_id
+function job_management_job_details(WP_REST_Request $request) {
+    global $wpdb;
+
+    // Get the job ID from the URL
+    $post_id = intval($request['id']);
+
+    // Fetch the job details from the 'jobs' table
+    $job_details = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}jobs WHERE post_id = %d",
+            $post_id
+        )
+    );
+
+    if ($job_details) {
+        // Return the job details as a JSON response
+        return new WP_REST_Response($job_details, 200);
+    } else {
+        // Return an error if no job is found
+        return new WP_REST_Response(array(
+            'message' => 'Job not found',
+        ), 404);
+    }
+}
+
 function handle_job_application(WP_REST_Request $request) {
     global $wpdb;
 
@@ -398,7 +425,7 @@ function job_management_list_jobs() {
 
         foreach ($results as $job) {
             $jobs[] = array(
-                'id' => $job->id,  
+                'id' => $job->post_id,  
                 'job_title' => $job->job_title,  
                 'job_description' => $job->job_description,  
                 'job_type' => $job->job_type,  
