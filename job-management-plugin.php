@@ -15,6 +15,7 @@ function job_management_create_table() {
     $table_name = $wpdb->prefix . 'jobs';
     $charset_collate = $wpdb->get_charset_collate();
 
+    // Check if the 'jobs' table exists
     $sql = "CREATE TABLE IF NOT EXISTS $table_name (
         id BIGINT(20) NOT NULL AUTO_INCREMENT,
         post_id BIGINT(20) NOT NULL,
@@ -35,7 +36,18 @@ function job_management_create_table() {
 
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
     dbDelta($sql);
+
+    // Check if the applications_count column exists
+    $column_exists = $wpdb->get_results("SHOW COLUMNS FROM $table_name LIKE 'applications_count'");
+
+    // If the column doesn't exist, add it
+    if (empty($column_exists)) {
+        $alter_sql = "ALTER TABLE $table_name ADD COLUMN applications_count INT DEFAULT 0 AFTER position_taken";
+        $wpdb->query($alter_sql);  
+    }
 }
+
+
 register_activation_hook(__FILE__, 'job_management_create_table');
 
 // Register Custom Post Type for Jobs
@@ -44,6 +56,17 @@ function job_management_register_job_post_type() {
         'labels' => array(
             'name' => 'Jobs',
             'singular_name' => 'Job',
+            'add_new'               => 'Add New Job', 
+            'add_new_item'          => 'Add New Job', 
+            'edit_item'             => 'Edit Job',
+            'new_item'              => 'New Job',
+            'view_item'             => 'View Job',
+            'all_items'             => 'All Jobs',
+            'search_items'         => 'Search Jobs',
+            'not_found'             => 'No jobs found',
+            'not_found_in_trash'   => 'No jobs found in Trash',
+            'parent_item_colon'    => '',
+            'menu_name'             => 'Jobs',
         ),
         'public' => true,
         'show_ui' => true,
@@ -110,10 +133,10 @@ function company_information_meta_box($post) {
 
     // Output the company name input field
     echo "<label for='company_name'>Company Name:</label>";
-    echo "<input type='text' name='company_name' id='company_name' value='" . esc_attr($company_name) . "' class='widefat' /><br>";
+    echo "<input type='text' name='company_name' id='company_name' value='" . esc_attr($company_name) . "' class='widefat' /><br><br>";
 
     // Output the company logo upload field
-    echo "<label for='company_logo'>Company Logo:</label>";
+    echo "<label for='company_logo'>Company Logo:&nbsp;</label>";
     echo "<input type='button' id='upload_logo_button' class='button' value='Select Logo' />";
     echo "<input type='hidden' name='company_logo' id='company_logo' value='" . esc_attr($company_logo) . "' />";
 
@@ -122,56 +145,16 @@ function company_information_meta_box($post) {
         echo "<p>Current Logo: <img src='" . esc_url($company_logo) . "' width='100' height='100' alt='Company Logo' /></p>";
     }
 }
-function enqueue_media_uploader_script() {
+function enqueue_custom_media_uploader_script($hook) {
+
     // Enqueue WordPress media library
     wp_enqueue_media();
-    
-    // Add custom JavaScript for the media uploader
-    ?>
-<script type="text/javascript">
-document.addEventListener('DOMContentLoaded', function() {
-    var mediaUploader;
 
-    // Handle the click event for the upload button
-    document.getElementById('upload_logo_button').addEventListener('click', function(e) {
-        e.preventDefault();
-
-        // If media uploader already exists, open it
-        if (mediaUploader) {
-            mediaUploader.open();
-            return;
-        }
-
-        // Create the media uploader instance
-        mediaUploader = wp.media.frames.file_frame = wp.media({
-            title: 'Select a Company Logo',
-            button: {
-                text: 'Use this image'
-            },
-            multiple: false // Allow only one file to be selected
-        });
-
-        // When an image is selected, update the hidden input field and preview the image
-        mediaUploader.on('select', function() {
-            var attachment = mediaUploader.state().get('selection').first().toJSON();
-            var image_url = attachment.url; // Get the image URL
-
-            // Set the image URL in the hidden input field
-            document.getElementById('company_logo').value = image_url;
-
-            // Display the selected image
-            var preview = document.getElementById('company_logo_preview');
-            preview.innerHTML = '<img src="' + image_url + '" width="100" height="100" />';
-        });
-
-        // Open the media uploader
-        mediaUploader.open();
-    });
-});
-</script>
-<?php
+    // Enqueue the custom JavaScript file
+    wp_enqueue_script('custom-media-uploader', plugin_dir_url(__FILE__) . 'assets/custom.js', array('jquery'), null, true);
 }
-add_action('admin_enqueue_scripts', 'enqueue_media_uploader_script');
+add_action('admin_enqueue_scripts', 'enqueue_custom_media_uploader_script');
+
 
 
 
@@ -180,12 +163,12 @@ function location_information_meta_box($post) {
     global $wpdb;
     $table_name = $wpdb->prefix . 'jobs';
 
-    // Retrieve the data for the current post
+    // Retrieve the data for the current job
     $job_data = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE post_id = %d", $post->ID));
 
     $location = $job_data->location ?? '';
 
-    // Define the list of countries (this can be dynamically fetched or predefined)
+    
     $countries = [
         'United States', 'Canada', 'Australia', 'United Kingdom', 'Germany', 'France', 
         'India', 'Italy', 'Spain', 'Brazil', 'South Korea', 'Japan', 'Mexico', 'China', 
@@ -231,7 +214,7 @@ function job_management_save_to_custom_table($post_id) {
     $display_featured = sanitize_text_field($_POST['display_featured'] ?? '');
     $position_taken = sanitize_text_field($_POST['position_taken'] ?? '');
 
-
+    $company_logo = "";
     // Check if we are saving our custom fields
     if (isset($_POST['company_logo'])) {
         $company_logo = sanitize_text_field($_POST['company_logo']);
@@ -308,27 +291,27 @@ function job_management_register_api_endpoints() {
     register_rest_route('job-management/v1', '/list', array(
         'methods' => 'GET',
         'callback' => 'job_management_list_jobs',
-        'permission_callback' => '__return_true', // Public access
+        'permission_callback' => '__return_true', 
     ));
 
     // Register the route to get job details
     register_rest_route('job-management/v1', '/details/(?P<id>\d+)', array(
         'methods' => 'GET',
-        'callback' => 'job_management_job_details',
-        'permission_callback' => '__return_true', // Public access
+        'callback' => 'job_management_job_details', // not created
+        'permission_callback' => '__return_true',
     ));
 
     // Register the route to apply for a job
-    register_rest_route('job-management/v1', '/apply', array(
-        'methods' => 'POST',
-        'callback' => 'job_management_apply_job',
-        'permission_callback' => '__return_true', // Public access
-    ));
+    // register_rest_route('job-management/v1', '/apply', array(
+    //     'methods' => 'POST',
+    //     'callback' => 'job_management_apply_job',
+    //     'permission_callback' => '__return_true', 
+    // ));
 
     register_rest_route('job-management/v1', '/submit', array(
         'methods' => 'POST',
         'callback' => 'handle_job_application',
-        'permission_callback' => '__return_true', // Public access (ensure to validate the input fields)
+        'permission_callback' => '__return_true', // Public access 
     ));
 }
 
@@ -340,10 +323,18 @@ function handle_job_application(WP_REST_Request $request) {
     $applicant_name = sanitize_text_field($request->get_param('applicant_name'));
     $email_address = sanitize_email($request->get_param('email_address'));
     $message = sanitize_textarea_field($request->get_param('message'));
+    $job_id = intval($request->get_param('job_id')); // Get the job ID from the request
 
     // Validate required fields
-    if (empty($applicant_name) || empty($email_address) || empty($message)) {
+    if (empty($applicant_name) || empty($email_address) || empty($message) || empty($job_id)) {
         return new WP_REST_Response('Please fill in all required fields.', 400);
+    }
+
+    // Check if the job ID exists in the wp_jobs table (assuming post_id is the job identifier)
+    $job_exists = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}jobs WHERE post_id = %d", $job_id));
+
+    if (!$job_exists) {
+        return new WP_REST_Response('Invalid job ID. Please apply for a valid job.', 400);
     }
 
     // Handle file upload for resume
@@ -362,40 +353,58 @@ function handle_job_application(WP_REST_Request $request) {
     }
 
     // Insert data into custom table for applications
-    $table_name = $wpdb->prefix . 'applications'; // Replace with your table name
+    $table_name = $wpdb->prefix . 'applications'; 
     $wpdb->insert(
         $table_name,
         array(
             'applicant_name' => $applicant_name,
             'email_address' => $email_address,
             'message' => $message,
+            'job_id' => $job_id, // Store the job ID
             'attachments' => $resume_url,
             'created_at' => current_time('mysql'),
         )
+    );
+
+    // Update the applications_count in the jobs table
+    $applications_count = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(*) FROM {$wpdb->prefix}applications WHERE job_id = %d", 
+        $job_id
+    ));
+
+    // Update the jobs table with the new applications_count
+    $wpdb->update(
+        $wpdb->prefix . 'jobs',
+        array('applications_count' => $applications_count), 
+        array('post_id' => $job_id), 
+        array('%d'), 
+        array('%d') 
     );
 
     return new WP_REST_Response('Application submitted successfully!', 200);
 }
 
 
+
+
 function job_management_list_jobs() {
     global $wpdb;
 
     // Query the 'jobs' table
-    $results = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}jobs", OBJECT);
+    $results = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}jobs WHERE listing_approved = 1 AND display_featured = 1 ORDER BY expiry_date ASC", OBJECT);
 
     if (!empty($results)) {
         $jobs = array();
 
         foreach ($results as $job) {
             $jobs[] = array(
-                'id' => $job->id,  // Assuming 'id' is the job ID in your table
-                'job_title' => $job->job_title,  // Adjust column names accordingly
-                'job_description' => $job->job_description,  // Adjust column names accordingly
-                'job_type' => $job->job_type,  // Adjust column names accordingly
-                'job_category' => $job->job_category,  // Adjust column names accordingly
-                'company_name' => $job->company_name,  // Adjust column names accordingly
-                'location' => $job->location,  // Adjust column names accordingly
+                'id' => $job->id,  
+                'job_title' => $job->job_title,  
+                'job_description' => $job->job_description,  
+                'job_type' => $job->job_type,  
+                'job_category' => $job->job_category, 
+                'company_name' => $job->company_name,  
+                'location' => $job->location,  
             );
         }
 
@@ -439,12 +448,15 @@ function job_management_listing_meta_box_callback($post) {
     // Retrieve the data for the current post (using the post ID)
     $job_data = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE post_id = %d", $post->ID));
 
-    // If no data is found, initialize default values
-    $publish_date = $job_data->publish_date ?? '';
-    $expiry_date = $job_data->expiry_date ?? '';
-    $listing_approved = $job_data->listing_approved ?? '';
-    $display_featured = $job_data->display_featured ?? '';
-    $position_taken = $job_data->position_taken ?? '';
+    $publish_date = !empty($job_data->publish_date) ? $job_data->publish_date : date('Y-m-d'); // Set current date as default
+
+    // Ensure correct format for expiry date (if it's set)
+    $expiry_date = isset($job_data->expiry_date) ? $job_data->expiry_date : '';
+
+    // Other fields
+    $listing_approved = isset($job_data->listing_approved) ? $job_data->listing_approved : '';
+    $display_featured = isset($job_data->display_featured) ? $job_data->display_featured : '';
+    $position_taken = isset($job_data->position_taken) ? $job_data->position_taken : '';
     
     ?>
 <label for="publish_date"><strong>Publish Date:</strong></label>
@@ -467,6 +479,7 @@ function job_management_listing_meta_box_callback($post) {
 <input type="submit" name="publish_job" value="Publish" class="button button-primary" />
 <?php
 }
+
 
 
 
@@ -575,11 +588,12 @@ function job_management_custom_column_content($column, $post_id) {
                 break;
 
             case 'applications':
-                // Count and display the number of applications for this job
-                $applications_count = count(get_comments(array(
-                    'post_id' => $post_id,
-                    'status' => 'approve', // Only count approved applications (if using comments for applications)
-                )));
+                // $applications_count = count(get_comments(array(
+                //     'post_id' => $post_id,
+                //     'status' => 'approve', // Only count approved applications 
+                // )));
+
+                $applications_count = $job_details->applications_count;
                 echo $applications_count;
                 break;
         }
@@ -604,18 +618,25 @@ function add_applications_submenu() {
 }
 add_action('admin_menu', 'add_applications_submenu');
 
-
-function display_applications_list() {
+function display_applications_list() { 
     global $wpdb;
     $applications_table = $wpdb->prefix . 'applications';
+    $jobs_table = $wpdb->prefix . 'jobs';  // Assuming the jobs table is named 'wp_jobs'
 
     // Set up pagination
     $limit = 10; // Number of applications per page
     $page = isset( $_GET['paged'] ) ? intval( $_GET['paged'] ) : 1;
     $offset = ( $page - 1 ) * $limit;
 
-    // Fetch applications with pagination
-    $applications = $wpdb->get_results( "SELECT * FROM $applications_table LIMIT $limit OFFSET $offset" );
+    // Fetch applications with pagination and job title
+    $applications = $wpdb->get_results( "
+        SELECT a.*, j.job_title 
+        FROM $applications_table a
+        LEFT JOIN $jobs_table j ON a.job_id = j.post_id
+        LIMIT $limit OFFSET $offset
+    " );
+
+    // Count total applications
     $total_applications = $wpdb->get_var( "SELECT COUNT(*) FROM $applications_table" );
     $total_pages = ceil( $total_applications / $limit );
 
@@ -629,17 +650,21 @@ function display_applications_list() {
             <tr>
                 <th>Applicant Name</th>
                 <th>Email</th>
-                <th>Message</th>
+                <th>Job</th>
                 <th>Resume</th>
+                <th>Message</th>
             </tr>
         </thead>
         <tbody>
             <?php foreach ( $applications as $application ) : ?>
             <tr>
-                <td><?php echo esc_html( $application->applicant_name ); ?></td>
+                <td><a href="javascript:void(0);" class="view-details"
+                        data-applicant-id="<?php echo esc_attr( $application->id ); ?>"><?php echo esc_html( $application->applicant_name ); ?></a>
+                </td>
                 <td><?php echo esc_html( $application->email_address ); ?></td>
-                <td><?php echo esc_html( $application->message ); ?></td>
+                <td><?php echo esc_html( $application->job_title ); ?></td>
                 <td><a href="<?php echo esc_url( $application->resume_url ); ?>" target="_blank">Download</a></td>
+                <td><?php echo esc_html( $application->message ); ?></td>
             </tr>
             <?php endforeach; ?>
         </tbody>
@@ -649,18 +674,18 @@ function display_applications_list() {
     <div class="tablenav bottom">
         <div class="alignleft actions">
             <?php
-                    $pagination_links = paginate_links( array(
-                        'total' => $total_pages,
-                        'current' => $page,
-                        'format' => '?paged=%#%',
-                        'show_all' => true,
-                        'type' => 'plain',
-                    ) );
+                $pagination_links = paginate_links( array(
+                    'total' => $total_pages,
+                    'current' => $page,
+                    'format' => '?paged=%#%',
+                    'show_all' => true,
+                    'type' => 'plain',
+                ) );
 
-                    if ( $pagination_links ) {
-                        echo '<div class="pagination">' . $pagination_links . '</div>';
-                    }
-                    ?>
+                if ( $pagination_links ) {
+                    echo '<div class="pagination">' . $pagination_links . '</div>';
+                }
+                ?>
         </div>
     </div>
 
@@ -668,8 +693,128 @@ function display_applications_list() {
     <p>No applications found.</p>
     <?php endif; ?>
 </div>
+
+<!-- Modal for application details -->
+<div id="application-details-modal" style="display:none;">
+    <div class="application-details-content">
+        <span id="close-modal" style="cursor:pointer;">&times;</span>
+        <div id="application-details"></div>
+    </div>
+</div>
+
+<script type="text/javascript">
+jQuery(document).ready(function($) {
+    // Click event for viewing application details
+    $('.view-details').on('click', function() {
+        var applicantId = $(this).data('applicant-id');
+
+        // AJAX request to fetch application details
+        $.ajax({
+            url: ajaxurl, // WordPress AJAX handler
+            type: 'GET',
+            data: {
+                action: 'get_application_details',
+                applicant_id: applicantId
+            },
+            success: function(response) {
+                if (response) {
+                    $('#application-details').html(response);
+                    $('#application-details-modal').show();
+                }
+            }
+        });
+    });
+
+    // Close modal
+    $('#close-modal').on('click', function() {
+        $('#application-details-modal').hide();
+    });
+});
+</script>
+
+<style>
+#application-details-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.application-details-content {
+    background: white;
+    padding: 20px;
+    border-radius: 5px;
+    max-width: 600px;
+    width: 100%;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+#close-modal {
+    float: right;
+    font-size: 24px;
+    font-weight: bold;
+}
+</style>
+
 <?php
 }
+
+
+function get_application_details() {
+    if ( isset( $_GET['applicant_id'] ) ) {
+        global $wpdb;
+        $applicant_id = intval( $_GET['applicant_id'] );
+
+        // Fetch the application details along with job title
+        $application = $wpdb->get_row( $wpdb->prepare( "
+            SELECT a.*, j.job_title
+            FROM {$wpdb->prefix}applications a
+            LEFT JOIN {$wpdb->prefix}jobs j ON a.job_id = j.post_id
+            WHERE a.id = %d
+        ", $applicant_id ) );
+
+        if ( $application ) :
+            ?>
+<h2><?php echo esc_html( $application->applicant_name ); ?> - Details</h2>
+<p><strong>Email:</strong> <?php echo esc_html( $application->email_address ); ?></p>
+<p><strong>Message:</strong> <?php echo nl2br( esc_html( $application->message ) ); ?></p>
+<p><strong>Job:</strong> <?php echo esc_html( $application->job_title ); ?></p> <!-- Display job title -->
+<p><strong>Attachments:</strong>
+    <?php 
+                if ( ! empty( $application->attachments ) ) {
+                    $attachments = explode( ',', $application->attachments );
+                    foreach ( $attachments as $attachment ) {
+                        echo '<a href="' . esc_url( $attachment ) . '" target="_blank">Download</a><br>';
+                    }
+                } else {
+                    echo 'No attachments found.';
+                }
+                ?>
+</p>
+<?php
+        else :
+            echo '<p>No application found with that ID.</p>';
+        endif;
+    }
+
+    die(); // Ensure proper termination of the request
+}
+add_action( 'wp_ajax_get_application_details', 'get_application_details' );
+
+
+function enqueue_application_scripts() {
+    wp_enqueue_script('jquery');
+    wp_localize_script('jquery', 'ajaxurl', admin_url('admin-ajax.php'));
+}
+add_action('wp_enqueue_scripts', 'enqueue_application_scripts');
 
 
 // function display_applications_list() {
@@ -718,25 +863,39 @@ function handle_application_submission() {
     }
 }
 add_action('admin_post_submit_application', 'handle_application_submission');
-
-
 function create_applications_table() {
     global $wpdb;
     $table_name = $wpdb->prefix . 'applications';
 
-    // SQL to create the table
-    $sql = "CREATE TABLE $table_name (
-        id INT NOT NULL AUTO_INCREMENT,
-        applicant_name VARCHAR(255) NOT NULL,
-        email_address VARCHAR(255) NOT NULL,
-        message TEXT NOT NULL,
-        attachments TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (id)
-    );";
+    // Check if the table exists
+    if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) {
+        // If the table does not exist, create it
+        $sql = "CREATE TABLE $table_name (
+            id INT NOT NULL AUTO_INCREMENT,
+            applicant_name VARCHAR(255) NOT NULL,
+            email_address VARCHAR(255) NOT NULL,
+            message TEXT NOT NULL,
+            attachments TEXT,
+            job_id INT NOT NULL,  
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            FOREIGN KEY (job_id) REFERENCES {$wpdb->prefix}jobs(post_id) ON DELETE CASCADE
+        );";
 
-    // Include $wpdb->get_charset_collate() for proper charset encoding
-    require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
-    dbDelta( $sql );
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
+    } else {
+        // If the table exists, check if the job_id column exists
+        $column_exists = $wpdb->get_results("SHOW COLUMNS FROM {$table_name} LIKE 'job_id'");
+        
+        if (empty($column_exists)) {
+            // Add the job_id column if it doesn't exist
+            $alter_sql = "ALTER TABLE $table_name ADD COLUMN job_id INT NOT NULL AFTER attachments";
+            
+            require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+            $wpdb->query($alter_sql);  // Using query instead of dbDelta for ALTER TABLE
+        }
+    }
 }
+
 register_activation_hook(__FILE__, 'create_applications_table');
